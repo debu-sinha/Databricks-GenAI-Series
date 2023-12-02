@@ -45,6 +45,7 @@
 
 # COMMAND ----------
 
+# MAGIC
 # MAGIC %md-sandbox
 # MAGIC ### 1/ Extracting Databricks documentation sitemap and pages
 # MAGIC
@@ -63,7 +64,7 @@
 
 # COMMAND ----------
 
-setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=False)
+setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=True)
 
 # COMMAND ----------
 
@@ -226,7 +227,7 @@ vector_db.similarity_search_with_relevance_scores("why should i use delta live t
 
 # COMMAND ----------
 
-# Make sure you reset the GPU to free our gpu memory if you're using multiple notebooks0
+# Make sure you reset the GPU to free our GPU memory if you're using multiple notebooks
 # (load the model only once in 1 single notebook to avoid OOM)
 reset_gpu()
 
@@ -247,14 +248,12 @@ template_text = """Below is an instruction that describes a task. Write a respon
 
 Instruction: 
 You are a Databricks Expert and your job is to help providing the best Databricks features related answers. 
-Use only information in the following paragraphs to answer the question at the end. 
+Use only information in the following paragraphs provided as Context: to answer the Question at the end. Truncate everything in your answer that starts with any non alphabetic character or numeric character.
 Explain the answer with url to source. 
 Dont repeat your self and write complete sentences.
 
-Truncate everything in your answer that starts with any non alphabetic character or numeric character. 
-
 If you don't have any information passed to use in the paragraphs, say that you do not know.
-{context}
+Context: {context}
 
 Question: {question}
 
@@ -274,6 +273,106 @@ qa_chain = build_qa_chain(model_name="mosaicml/mpt-7b-chat", prompt_template=pro
 
 # COMMAND ----------
 
-question="why should I use Delta LIve Tables for ETL?"
+question="why should I use Delta Live Tables for ETL?"
 result = qa_chain({"input_documents": vector_db.similarity_search(query=question, k=2), "question": question})
 format_and_display_chat_response(question, result)
+
+# COMMAND ----------
+
+# Make sure you reset the GPU to free our GPU memory
+reset_gpu()
+
+# COMMAND ----------
+
+template_text_with_memory="""
+Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+Instruction: 
+You are a Databricks Expert and your job is to help providing the best Databricks features related answers. 
+Use only information in the following paragraphs provided as Context: and past conversations provided as Chat_history: to answer the Question at the end. Truncate everything in your answer that starts with any non alphabetic character or numeric character. Remove any incomplete sentence.
+Explain the answer with url to source. 
+Dont repeat your self and write complete sentences.
+
+If you don't have any information passed to use in the paragraphs, say that you do not know.
+Context: {context}
+
+Chat_history: {chat_history}
+
+Question: {question}
+
+Response:
+"""
+
+prompt = PromptTemplate(input_variables=['context', 'chat_history', 'question'], template=template_text_with_memory)
+
+#Building the chain will load MPT-7B-chat and can take several minutes
+qa_chain_with_memory = build_qa_chain_with_memory(model_name="mosaicml/mpt-7b-chat", prompt_template=prompt, verbose=True)
+
+# question="why should I use Delta Live Tables for ETL?"
+# result = qa_chain_with_memory({"input_documents": vector_db.similarity_search(query=question, k=2), "question": question})
+# format_and_display_chat_response(question, result)
+
+# COMMAND ----------
+
+class ChatBot():
+    def __init__(self, db, template_text, model_name="mosaicml/mpt-7b-chat", verbose=False):
+        self.sources = []
+        self.discussion = []
+        self.db = db
+        self.model_name=model_name
+        self.verbose=verbose
+        self.template_text=template_text
+        self.model=build_qa_chain_with_memory(model_name=self.model_name, prompt_template=self.template_text, verbose=self.verbose)
+
+
+    def reset_context(self):
+        self.sources = []
+        self.discussion = []
+        self.model=build_qa_chain_with_memory(model_name=self.model_name, prompt_template=self.template_text, verbose=self.verbose)
+        displayHTML("<h1>Hi! I'm a chat bot specialized in Databricks. How Can I help you today?</h1>")
+
+    def get_similar_docs(self, question, similar_doc_count):
+        return self.db.similarity_search(question, k=similar_doc_count)
+
+    def build_result_html(self, question, answer, input_documents):
+        result_html = f"<p><blockquote style=\"font-size:24\">{question}</blockquote></p>"
+        result_html += f"<p><blockquote style=\"font-size:18px\">{answer.capitalize()}</blockquote></p>"
+        result_html += "<p><hr/></p>"
+
+        for d in input_documents:
+            source = d.metadata["url"]
+            self.sources.append(source)
+            result_html += f"<p><blockquote>{d.page_content}<br/>(Source: <a href=\"{source}\">{source}</a>)</blockquote></p>"
+
+        return result_html
+
+    def display_result(self, result_html):
+        # Consider moving the displayHTML call to another part of your application
+        displayHTML(result_html)
+
+    def chat(self, question):
+        try:
+            # Keep the last 3 discussions to search for similar content
+            self.discussion.append(question)
+            similar_docs = self.get_similar_docs(" \n".join(self.discussion[-3:]), similar_doc_count=2)
+            # Remove similar docs if they're already in the last questions (as it's already in the history)
+            similar_docs = [doc for doc in similar_docs if doc.metadata['url'] not in self.sources[-3:]]
+
+            result = self.qa_chain({"input_documents": similar_docs, "question": question})
+            answer = result['output_text']
+            result_html = self.build_result_html(question, answer, result["input_documents"])
+            self.display_result(result_html)
+
+        except Exception as e:
+            # Handle exceptions (e.g., model loading failure, database connection issues)
+            print(f"Error: {e}")
+
+
+# COMMAND ----------
+
+chat_bot = ChatBot(db=vector_db, template_text=template_text_with_memory, verbose=True)
+
+# COMMAND ----------
+
+# Make sure you reset the GPU to free our GPU memory
+reset_gpu()

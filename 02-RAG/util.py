@@ -53,8 +53,9 @@ def setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=False, max_documen
         try:
             dbutils.fs.rm(raw_data_dir, True)
             dbutils.fs.mkdirs(raw_data_dir)
-            spark.sql(f"DROP CATALOG IF EXISTS {catalog_name} CASCADE")
-            spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog_name}")
+            #uncomment these two lines if the users have permission to create a catalog and they are not sharing common catalog.
+            # spark.sql(f"DROP CATALOG IF EXISTS {catalog_name} CASCADE")
+            # spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog_name}")
             spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
             spark.sql(f"USE CATALOG {catalog_name}")
             spark.sql(f"USE SCHEMA {schema_name}")
@@ -381,7 +382,6 @@ from langchain.llms import HuggingFacePipeline
 from langchain.chains.question_answering import load_qa_chain
 
 
-
 def build_qa_chain(model_name="databricks/dolly-v2-7b", 
                    torch_dtype=torch.bfloat16, 
                    max_new_tokens=256, 
@@ -428,6 +428,69 @@ def build_qa_chain(model_name="databricks/dolly-v2-7b",
     # Return the QA chain
     return load_qa_chain(llm=hf_pipe, chain_type=chain_type, prompt=prompt_template, verbose=verbose)
 
+
+# COMMAND ----------
+
+from langchain.chains.summarize import load_summarize_chain
+from langchain.memory import ConversationSummaryBufferMemory
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, AutoModelForSeq2SeqLM
+
+def build_qa_chain_with_memory(model_name="databricks/dolly-v2-7b", 
+                   summarization_model="t5-small",            
+                   torch_dtype=torch.bfloat16, 
+                   max_new_tokens=256, 
+                   top_k=50,
+                   prompt_template=None, 
+                   chain_type="stuff",
+                   verbose=False,
+                   **pipeline_kwargs):
+    """
+    Builds and returns a QA chain using the specified model, parameters, and optional prompt template.
+
+    Args:
+        model_name (str): Name of the HuggingFace model to use.
+        torch_dtype (torch.dtype): Data type for model tensors.
+        max_new_tokens (int): Maximum new tokens to generate.
+        top_k (int): Top-k sampling's k value.
+        prompt_template (PromptTemplate, optional): Custom prompt template. If None, uses a default template.
+        chain_type (str): Type of the QA chain.
+        verbose (bool): Verbose output flag.
+        **pipeline_kwargs: Additional keyword arguments for the HuggingFace pipeline.
+
+    Returns:
+        A QA chain object.
+    """
+ 
+    summarize_model = AutoModelForSeq2SeqLM.from_pretrained(summarization_model, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True)
+    summarize_tokenizer = AutoTokenizer.from_pretrained(summarization_model, padding_side="left", model_max_length = 512)
+    summary_pipeline = pipeline("summarization", model=summarize_model, tokenizer=summarize_tokenizer) 
+    # chain = load_summarize_chain(HuggingFacePipeline(pipeline=summary_pipeline), chain_type=chain_type)
+  
+  #will keep 500 token and then ask for a summary. Removes prefix as our model isn't trained on specific chat prefix and can get confused.
+    memory = ConversationSummaryBufferMemory(llm=HuggingFacePipeline(pipeline=summary_pipeline), memory_key="chat_history", input_key="question", max_token_limit=500, human_prefix = "", ai_prefix = "")
+
+ 
+    # Create the pipeline with specified parameters
+    # this pipeline is for QA
+    instruct_pipeline = pipeline(
+        model=model_name,
+        torch_dtype=torch_dtype,
+        device_map="auto",
+        max_new_tokens=max_new_tokens,
+        top_k=top_k,
+        **pipeline_kwargs
+    )
+
+    # Define a default prompt template if none provided
+    if not prompt_template:
+        template_text = """..."""  # Default template text
+        prompt_template = PromptTemplate(input_variables=['context', 'chat_history', 'human_input'], template=template_text)
+
+    # Create a HuggingFace pipeline
+    hf_pipe = HuggingFacePipeline(pipeline=instruct_pipeline)
+
+    # Return the QA chain
+    return load_qa_chain(llm=hf_pipe, chain_type=chain_type, prompt=prompt_template, verbose=verbose, memory=memory)
 
 # COMMAND ----------
 
