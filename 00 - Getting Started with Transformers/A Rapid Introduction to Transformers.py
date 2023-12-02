@@ -1,4 +1,17 @@
 # Databricks notebook source
+dbutils.widgets.text("catalog_name","main")
+
+# COMMAND ----------
+
+# MAGIC %run ./init/config $catalog_name=$catalog_name
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ![DB + HF](./images/LangChain_Logo-1.png)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC # LLMs with Hugging Face
 # MAGIC In this notebook, we'll take a whirlwind tour of some top applications using Large Language Models (LLMs), as well as several key aspects of the Hugginface Transformers Library. These will include:
@@ -13,6 +26,15 @@
 # MAGIC 1. Understand how to load tokenizers and models from Huggingface using the `transformers` library
 # MAGIC 2. Understand how load datasets from Huggingface using the `datasets` library
 # MAGIC 3. Log our Transformers pipeline to MLflow with the `mlflow.transformers` library
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## The Transformers Library
+# MAGIC - Let's navigate to [Huggingface model hub](https://huggingface.co/models) and explore some models that are on the platform
+# MAGIC
+# MAGIC ## Transformers Models and Tokenizers
+# MAGIC - TODO
 
 # COMMAND ----------
 
@@ -98,9 +120,9 @@ mlflow.transformers.log_model(pipe, model_name, signature=signature, input_examp
 # COMMAND ----------
 
 import mlflow
-catalog = "doan_demo_catalog"
-schema = "language_models"
-model_name = "mpt-7b-doan-demo"
+catalog = dbutils.widgets.get("catalog_name")
+schema = schema_name
+model_name = "jpeg_mafia"
 mlflow.set_registry_uri("databricks-uc")
 mlflow.register_model(
     model_uri="dbfs:/databricks/mlflow-tracking/05739e2a092c4d60b3e03bc138b09e07/bd85c2dec62947858caffcabc862ab98/artifacts/mpt-7b-doan-demo",
@@ -109,4 +131,8 @@ mlflow.register_model(
 
 # COMMAND ----------
 
-
+# MAGIC %md
+# MAGIC
+# MAGIC ## View Our Model in Unity Catalog
+# MAGIC
+# MAGIC Now we can navigate to our `Catalog` and view our model
