@@ -21,15 +21,4 @@ spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
 
 # COMMAND ----------
 
-tokenizer = AutoTokenizer.from_pretrained("google/pegasus-xsum")
-model = AutoModelForSeq2SeqLM.from_pretrained("google/pegasus-xsum")
-
-# COMMAND ----------
-
-xsum_dataset = load_dataset(
-    "xsum", version="1.2.0"
-)
-
-# COMMAND ----------
-
 
