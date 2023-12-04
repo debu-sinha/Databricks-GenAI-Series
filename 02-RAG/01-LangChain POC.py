@@ -64,7 +64,7 @@
 
 # COMMAND ----------
 
-setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=True)
+setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=False)
 
 # COMMAND ----------
 
@@ -101,13 +101,13 @@ from langchain.text_splitter import HTMLHeaderTextSplitter, RecursiveCharacterTe
 from transformers import AutoTokenizer
 
 # Define maximum chunk size and the model for embedding tokenizer
-max_chunk_size = 400
+max_chunk_size = 1000
 EMBEDDING_TOKENIZER_MODEL = "sentence-transformers/all-mpnet-base-v2"
 tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_TOKENIZER_MODEL)
-text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(tokenizer, chunk_size=max_chunk_size, chunk_overlap=50)
+text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(tokenizer, chunk_size=max_chunk_size, chunk_overlap=100)
 html_splitter = HTMLHeaderTextSplitter(headers_to_split_on=[("h2", "header2")])
 
-def split_html_on_h2(html, min_chunk_size=20, max_chunk_size=1000):
+def split_html_on_h2(html, min_chunk_size=100):
     """
     Splits an HTML document into chunks based on H2 headers.
 
@@ -244,20 +244,23 @@ from langchain import PromptTemplate
 
 
 # Defining the prompt content
-template_text = """Below is an instruction that describes a task. Write a response that appropriately completes the request.
+template_text = """
+Instruction:
+As a Databricks Expert, give clear and precise answers to user questions regarding Databricks features. Follow these instructions.
 
-Instruction: 
-You are a Databricks Expert and your job is to help providing the best Databricks features related answers. 
-Use only information in the following paragraphs provided as Context: to answer the Question at the end. Truncate everything in your answer that starts with any non alphabetic character or numeric character.
-Explain the answer with url to source. 
-Dont repeat your self and write complete sentences.
+1. Avoid Repetition and answer in short sentences.
+2. Answer in 5 sentences or less.
+3. Use complete sentences.
+4. Base your answer only on the information provided in Context
+5. Remove any information that starts with # or any symbol.
 
-If you don't have any information passed to use in the paragraphs, say that you do not know.
-Context: {context}
+Context:
+{context}
 
-Question: {question}
+Question:
+{question}
 
-Response:
+Craft your expert answer here.
 """
 
 prompt = PromptTemplate(input_variables=['context', 'question'], template=template_text)
@@ -273,8 +276,8 @@ qa_chain = build_qa_chain(model_name="mosaicml/mpt-7b-chat", prompt_template=pro
 
 # COMMAND ----------
 
-question="why should I use Delta Live Tables for ETL?"
-result = qa_chain({"input_documents": vector_db.similarity_search(query=question, k=2), "question": question})
+question="How is MLflow integrated in Databricks?"
+result = qa_chain({"input_documents": vector_db.similarity_search(query=question, k=1), "question": question})
 format_and_display_chat_response(question, result)
 
 # COMMAND ----------
@@ -284,51 +287,59 @@ reset_gpu()
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ## 3/ Advanced, Creating a Chatbot that has memory (Optional)
+
+# COMMAND ----------
+
+reset_gpu()
+
+# COMMAND ----------
+
 template_text_with_memory="""
-Below is an instruction that describes a task. Write a response that appropriately completes the request.
+Instruction:
+As a Databricks Expert, give clear and precise answers to user questions regarding Databricks features. Follow these instructions. 
 
-Instruction: 
-You are a Databricks Expert and your job is to help providing the best Databricks features related answers. 
-Use only information in the following paragraphs provided as Context: and past conversations provided as Chat_history: to answer the Question at the end. Truncate everything in your answer that starts with any non alphabetic character or numeric character. Remove any incomplete sentence.
-Explain the answer with url to source. 
-Dont repeat your self and write complete sentences.
+1. Avoid Repetition and answer in short sentences.
+2. Answer in 5 sentences or less.
+3. Use Complete Sentences
+4. Base your answer only on the information provided in Context and the Chat_history.
+5. Remove any information that starts with # or any symbol.
 
-If you don't have any information passed to use in the paragraphs, say that you do not know.
-Context: {context}
+Context:
+{context}
 
-Chat_history: {chat_history}
+Chat_history:
+{chat_history}
 
-Question: {question}
+Question:
+{question}
 
-Response:
+Craft your expert answer here.
 """
 
-prompt = PromptTemplate(input_variables=['context', 'chat_history', 'question'], template=template_text_with_memory)
+prompt_template = PromptTemplate(input_variables=['context', 'chat_history', 'question'], template=template_text_with_memory)
 
-#Building the chain will load MPT-7B-chat and can take several minutes
-qa_chain_with_memory = build_qa_chain_with_memory(model_name="mosaicml/mpt-7b-chat", prompt_template=prompt, verbose=True)
+# COMMAND ----------
 
-# question="why should I use Delta Live Tables for ETL?"
-# result = qa_chain_with_memory({"input_documents": vector_db.similarity_search(query=question, k=2), "question": question})
-# format_and_display_chat_response(question, result)
+# MAGIC %md
+# MAGIC ## Section 3: Deploying Chatbot to Databricks serving end-point
 
 # COMMAND ----------
 
 class ChatBot():
-    def __init__(self, db, template_text, model_name="mosaicml/mpt-7b-chat", verbose=False):
-        self.sources = []
-        self.discussion = []
+    def __init__(self, db, template_text=None, model_name="mosaicml/mpt-7b-chat", verbose=False):
         self.db = db
         self.model_name=model_name
         self.verbose=verbose
         self.template_text=template_text
-        self.model=build_qa_chain_with_memory(model_name=self.model_name, prompt_template=self.template_text, verbose=self.verbose)
+        self.reset_context()
 
 
     def reset_context(self):
         self.sources = []
         self.discussion = []
-        self.model=build_qa_chain_with_memory(model_name=self.model_name, prompt_template=self.template_text, verbose=self.verbose)
+        self.qa_chain=build_qa_chain_with_memory(model_name=self.model_name, verbose=self.verbose, prompt_template=self.template_text)
         displayHTML("<h1>Hi! I'm a chat bot specialized in Databricks. How Can I help you today?</h1>")
 
     def get_similar_docs(self, question, similar_doc_count):
@@ -357,7 +368,6 @@ class ChatBot():
             similar_docs = self.get_similar_docs(" \n".join(self.discussion[-3:]), similar_doc_count=2)
             # Remove similar docs if they're already in the last questions (as it's already in the history)
             similar_docs = [doc for doc in similar_docs if doc.metadata['url'] not in self.sources[-3:]]
-
             result = self.qa_chain({"input_documents": similar_docs, "question": question})
             answer = result['output_text']
             result_html = self.build_result_html(question, answer, result["input_documents"])
@@ -365,12 +375,20 @@ class ChatBot():
 
         except Exception as e:
             # Handle exceptions (e.g., model loading failure, database connection issues)
-            print(f"Error: {e}")
+            print(f"Errorz: {e}")
 
 
 # COMMAND ----------
 
-chat_bot = ChatBot(db=vector_db, template_text=template_text_with_memory, verbose=True)
+chat_bot = ChatBot(db=vector_db, template_text=prompt_template, verbose=False)
+
+# COMMAND ----------
+
+chat_bot.chat("what is delta format?")
+
+# COMMAND ----------
+
+chat_bot.chat("does delta format support ACID transactions?")
 
 # COMMAND ----------
 

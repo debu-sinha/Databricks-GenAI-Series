@@ -419,7 +419,13 @@ def build_qa_chain(model_name="databricks/dolly-v2-7b",
 
     # Define a default prompt template if none provided
     if not prompt_template:
-        template_text = """..."""  # Default template text
+        template_text = """You are an assistant for question-answering tasks. Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise. return unique URL list of the documents provided in context.
+        
+        Question: {question} 
+
+        Context: {context} 
+        
+        Answer:"""  # Default template text
         prompt_template = PromptTemplate(input_variables=['context', 'question'], template=template_text)
 
     # Create a HuggingFace pipeline
@@ -436,7 +442,7 @@ from langchain.memory import ConversationSummaryBufferMemory
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline, AutoModelForSeq2SeqLM
 
 def build_qa_chain_with_memory(model_name="databricks/dolly-v2-7b", 
-                   summarization_model="t5-small",            
+                   summarization_model="google/flan-t5-base",            
                    torch_dtype=torch.bfloat16, 
                    max_new_tokens=256, 
                    top_k=50,
@@ -460,14 +466,13 @@ def build_qa_chain_with_memory(model_name="databricks/dolly-v2-7b",
     Returns:
         A QA chain object.
     """
- 
+
     summarize_model = AutoModelForSeq2SeqLM.from_pretrained(summarization_model, device_map="auto", torch_dtype=torch.bfloat16, trust_remote_code=True)
     summarize_tokenizer = AutoTokenizer.from_pretrained(summarization_model, padding_side="left", model_max_length = 512)
     summary_pipeline = pipeline("summarization", model=summarize_model, tokenizer=summarize_tokenizer) 
-    # chain = load_summarize_chain(HuggingFacePipeline(pipeline=summary_pipeline), chain_type=chain_type)
   
   #will keep 500 token and then ask for a summary. Removes prefix as our model isn't trained on specific chat prefix and can get confused.
-    memory = ConversationSummaryBufferMemory(llm=HuggingFacePipeline(pipeline=summary_pipeline), memory_key="chat_history", input_key="question", max_token_limit=500, human_prefix = "", ai_prefix = "")
+    memory = ConversationSummaryBufferMemory(llm=HuggingFacePipeline(pipeline=summary_pipeline), memory_key="chat_history", input_key="question", max_token_limit=500, human_prefix = "Human", ai_prefix = "AI")
 
  
     # Create the pipeline with specified parameters
@@ -483,14 +488,23 @@ def build_qa_chain_with_memory(model_name="databricks/dolly-v2-7b",
 
     # Define a default prompt template if none provided
     if not prompt_template:
-        template_text = """..."""  # Default template text
-        prompt_template = PromptTemplate(input_variables=['context', 'chat_history', 'human_input'], template=template_text)
+        template = """You are a chatbot having a conversation with a human. Your are asked to answer questions related to Databricks.
+        Given the following extracted parts of a long document and a question, answer the user question. If you don't know, say that you do not know. 
+            {context}
+            
+            {chat_history}
+            
+            {question}
+            
+            Response:
+        """
+        prompt_template = PromptTemplate(input_variables=['context', 'chat_history', 'question'], template=template)
 
     # Create a HuggingFace pipeline
     hf_pipe = HuggingFacePipeline(pipeline=instruct_pipeline)
 
     # Return the QA chain
-    return load_qa_chain(llm=hf_pipe, chain_type=chain_type, prompt=prompt_template, verbose=verbose, memory=memory)
+    return load_qa_chain(llm=hf_pipe, chain_type=chain_type, prompt=prompt_template, memory=memory, verbose=verbose)
 
 # COMMAND ----------
 
