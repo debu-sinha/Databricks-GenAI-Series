@@ -7,6 +7,15 @@ dbutils.widgets.text("catalog_name","main")
 
 # COMMAND ----------
 
+dbutils.library.restartPython()
+
+# COMMAND ----------
+
+current_user = spark.sql("SELECT current_user() as username").collect()[0].username
+schema_name = f'genai_workshop_{current_user.split("@")[0].split(".")[0]}'
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC
 # MAGIC # Prompt Engineering
@@ -31,57 +40,25 @@ dbutils.widgets.text("catalog_name","main")
 
 # COMMAND ----------
 
-import os
-from langchain.llms import HuggingFacePipeline
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from langchain.llms import OpenAI
-import openai
-
-open_ai_key = dbutils.secrets.get(scope = "doan-scope", key = "openai-key2")
-os.environ["OPENAI_API_KEY"] = open_ai_key
-openai.api_key = os.environ["OPENAI_API_KEY"]
+import langchain
+print(langchain.__version__)
 
 # COMMAND ----------
 
-# DBTITLE 1,Ask OpenAI Function for Comparisons
-def ask_open_ai(input_string, model, max_tokens, temperature):
-  """
-  Calls open AI with model and desired input string to return a single response. 
+# DBTITLE 1,Call Llama 70B for this Lab
+import os
+from langchain.llms import HuggingFacePipeline
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from langchain.chat_models import ChatDatabricks
 
-  Params
-  =======
-  input_string (str): The string/query being passed to the model
-  model (str): The name of the OpenAI model
-  max_tokens (int): Max number of tokens in response
-  temperature (float): The temperature value (higher temperature means more diverse responses)
-  """
-  response = openai.Completion.create(
-        model=model,
-        prompt = input_string,
-        max_tokens=max_tokens,
-        n=1,
-        stop=None,
-        temperature=temperature,
-    )  
-  
-  answer = response.choices[0].text.strip()
-  return answer
+#call llama2 70B, hosted by Databricks
+llama_model = ChatDatabricks(endpoint="databricks-llama-2-70b-chat", max_tokens = 400)
 
 # COMMAND ----------
 
 # DBTITLE 1,Start with a Simple Question about Spark Joins
 user_question = "How can I speed up my Spark join operation?"
-
-# COMMAND ----------
-
-#select our model
-model_name = "text-davinci-003"
-#max tokens helps us control the length of the model response, which in turn helps us control inference time
-max_tokens = 200
-#temperature can be used to toggle reponse diversity
-temperature = 0.5
-
-ask_open_ai(user_question, model_name, max_tokens, temperature)
+llama_model.predict(user_question)
 
 # COMMAND ----------
 
@@ -98,22 +75,20 @@ User Question:" {question}"
 # COMMAND ----------
 
 # DBTITLE 1,Create an LLM Chain that appends our Template to the User Input
-openAI_LLM = OpenAI(model="text-davinci-003")
-
 prompt_template = PromptTemplate(
     input_variables=["question"],
     template=intro_template,
 )
 
-openAI_Chain = LLMChain(
-    llm=openAI_LLM,
+llama_chain = LLMChain(
+    llm=llama_model,
     prompt=prompt_template,
     output_key="Support Response",
     verbose=False
 )
 
-openAI_Chain_response = openAI_Chain.run({"question":user_question})
-print(openAI_Chain_response)
+llama_chain_response = llama_chain.run({"question":user_question})
+print(llama_chain_response)
 
 # COMMAND ----------
 
@@ -175,12 +150,12 @@ few_shot_template = """For each tweet, describe its sentiment:
 # COMMAND ----------
 
 tweet = "My day has been ugh"
-zero_shot_response = run_llm_chain(tweet, zero_shot_template, openAI_LLM)
+zero_shot_response = run_llm_chain(tweet, zero_shot_template, llama_model)
 print(zero_shot_response)
 
 # COMMAND ----------
 
-few_shot_response = run_llm_chain(tweet, few_shot_template, openAI_LLM)
+few_shot_response = run_llm_chain(tweet, few_shot_template, llama_model)
 print(few_shot_response)
 
 # COMMAND ----------
@@ -196,7 +171,7 @@ apples = """
 "Imagine you are at a grocery store and need to buy apples. They are sold in bags of 6 apples each and cost $2 per bag. If you need 20 apples for a recipe, how many bags should you buy and how much will it cost?
 """
 
-ask_open_ai(apples, model_name, max_tokens, temperature)
+llama_model.predict(apples)
 
 # COMMAND ----------
 
@@ -206,7 +181,7 @@ chain_of_reasoning_prompt = """
                             {input_string}
                             """
 
-cor_response = run_llm_chain(apples, chain_of_reasoning_prompt, openAI_LLM)
+cor_response = run_llm_chain(apples, chain_of_reasoning_prompt, llama_model)
 print(cor_response)
 
 # COMMAND ----------
@@ -227,12 +202,12 @@ no_hallucinations_prompt = """
 
 # COMMAND ----------
 
-liquid_cluster = "What is liquid clustering?"
-ask_open_ai(liquid_cluster, model_name, max_tokens, temperature)
+liquid_cluster = "What is liquid clustering on Databricks?"
+llama_model.predict(liquid_cluster)
 
 # COMMAND ----------
 
-run_llm_chain(liquid_cluster, no_hallucinations_prompt, openAI_LLM)
+run_llm_chain(liquid_cluster, no_hallucinations_prompt, llama_model)
 
 # COMMAND ----------
 
@@ -254,7 +229,7 @@ your_question_here = """
 
 # COMMAND ----------
 
-ask_open_ai(your_question_here, model_name, max_tokens, temperature)
+llama_model.predict(your_question_here)
 
 # COMMAND ----------
 
@@ -282,26 +257,41 @@ model_chain.run() #TODO: what do we need to pass into run()?
 from mlflow.models import infer_signature
 
 input_str="How can I speed up my Spark joins?"
-prediction = openAI_Chain.run(input_str)
+prediction = llama_chain.run(input_str)
 input_columns = [
-    {"type": "string", "name": input_key} for input_key in openAI_Chain.input_keys
+    {"type": "string", "name": input_key} for input_key in llama_chain.input_keys
 ]
 signature = infer_signature(input_columns, prediction)
 
 # COMMAND ----------
 
 import mlflow
-#Create a new mlflow experiment or get the existing one if already exists.
+import cloudpickle
+
+# Create a new mlflow experiment or get the existing one if already exists.
+current_user = spark.sql("SELECT current_user() as username").collect()[0].username
 experiment_name = f"/Users/{current_user}/genai-prompt-engineering-workshop"
 mlflow.set_experiment(experiment_name)
 
-#set the name of our model
-model_name = "2langchainz"
+# set the name of our model
+model_name = "2langchainz-llama70b"
 
-#get experiment id to pass to the run
+# get experiment id to pass to the run
 experiment_id = mlflow.get_experiment_by_name(experiment_name).experiment_id
 with mlflow.start_run(experiment_id=experiment_id):
-  mlflow.langchain.log_model(openAI_Chain, model_name, signature=signature, input_example=input_str)
+    mlflow.langchain.log_model(
+        llama_chain,
+        model_name,
+        signature=signature,
+        input_example=input_str,
+        pip_requirements=[
+            "mlflow==" + mlflow.__version__,
+            "langchain==" + langchain.__version__,
+            "databricks-vectorsearch",
+            "pydantic==2.5.2 --no-binary pydantic",
+            "cloudpickle==" + cloudpickle.__version__,
+        ]
+    )
 
 # COMMAND ----------
 
