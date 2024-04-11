@@ -19,9 +19,10 @@
 # MAGIC 1. **Data Preparation**: Here, we will ingest and refine our Databricks knowledge docs from Databricks documentation, chunk the documents, transform them into a series of embeddings stored within a vector database.
 # MAGIC 2. **Q&A Inference**: This segment involves utilizing the MPT-7B Chat model to respond to queries. We will enhance the chatbot's responses by incorporating our Datbabricks documents dataset as additional context, a technique often referred to as Prompt Engineering.
 # MAGIC
+# MAGIC ####This notebook has been tested on 13.3 ML Runtine with GPU, Use single node g5.8xlarge machine with a single A10.
 # MAGIC
 # MAGIC
-# MAGIC
+# MAGIC ####NOTE: Change the `catalog_name` and `schema_name` in the `util` file to point to catalog and schema where students have permision to create and read Delta tables.
 # MAGIC
 
 # COMMAND ----------
@@ -63,11 +64,11 @@
 
 # COMMAND ----------
 
-setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=False)
+setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=True)
 
 # COMMAND ----------
 
-display(spark.table(f"{catalog_name}.{schema_name}.databricks_documentation_raw").limit(5))
+display(spark.table(f"databricks_documentation_raw_{table_suffix}"))
 
 # COMMAND ----------
 
@@ -106,7 +107,7 @@ tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_TOKENIZER_MODEL)
 text_splitter = RecursiveCharacterTextSplitter.from_huggingface_tokenizer(tokenizer, chunk_size=max_chunk_size, chunk_overlap=50)
 html_splitter = HTMLHeaderTextSplitter(headers_to_split_on=[("h2", "header2")])
 
-def split_html_on_h2(html, min_chunk_size=20, max_chunk_size=1000):
+def split_html_on_h2(html, min_chunk_size=20, max_chunk_size=400):
     """
     Splits an HTML document into chunks based on H2 headers.
 
@@ -140,7 +141,7 @@ def split_html_on_h2(html, min_chunk_size=20, max_chunk_size=1000):
     return [c for c in chunks if len(tokenizer.encode(c)) > min_chunk_size]
 
 #lets test this method
-html = spark.table(f"{catalog_name}.{schema_name}.databricks_documentation_raw").limit(1).collect()[0]['text']
+html = spark.table(f"databricks_documentation_raw_{table_suffix}").limit(1).collect()[0]['text']
 split_html_on_h2(html)
 
 # COMMAND ----------
@@ -155,14 +156,14 @@ def parse_and_split(docs: pd.Series) -> pd.Series:
 # COMMAND ----------
 
 
-(spark.table(f"{catalog_name}.{schema_name}.databricks_documentation_raw")
+(spark.table(f"databricks_documentation_raw_{table_prefix}")
     .withColumn('content', explode(parse_and_split('text')))
     .drop("text")
-    .write.mode('overwrite').saveAsTable(f"{catalog_name}.{schema_name}.databricks_documentation"))
+    .write.mode('overwrite').saveAsTable(f"{catalog_name}.{schema_name}.databricks_documentation_{table_suffix}"))
 
 # COMMAND ----------
 
-display(spark.table(f"{catalog_name}.{schema_name}.databricks_documentation"))
+display(spark.table(f"{catalog_name}.{schema_name}.databricks_documentation_{table_suffix}"))
 
 # COMMAND ----------
 
@@ -207,7 +208,7 @@ if USE_CACHE:
   vector_db = Chroma(collection_name="databricks_documents", embedding_function=hf_embed, persist_directory=persist_directory)
 else:
   reset_vector_db(persist_directory)
-  loader = PySparkDataFrameLoader(spark, spark.table(f"{catalog_name}.{schema_name}.databricks_documentation"), page_content_column="content")
+  loader = PySparkDataFrameLoader(spark, spark.table(f"{catalog_name}.{schema_name}.databricks_documentation_{table_suffix}"), page_content_column="content")
   split_docs=loader.load()
   vector_db = Chroma.from_documents(collection_name="databricks_documents", documents=split_docs, embedding=hf_embed, persist_directory=persist_directory)
   vector_db.similarity_search("spark") 
@@ -274,6 +275,19 @@ qa_chain = build_qa_chain(model_name="mosaicml/mpt-7b-chat", prompt_template=pro
 
 # COMMAND ----------
 
-question="why should I use Delta LIve Tables for ETL?"
+question="why should I use Delta Live Tables for ETL?"
 result = qa_chain({"input_documents": vector_db.similarity_search(query=question, k=2), "question": question})
 format_and_display_chat_response(question, result)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Cleanup
+
+# COMMAND ----------
+
+spark.sql(f"drop table {catalog_name}.{schema_name}.databricks_documentation_{table_suffix}")
+
+# COMMAND ----------
+
+

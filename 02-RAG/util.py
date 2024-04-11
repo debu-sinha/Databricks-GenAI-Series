@@ -53,9 +53,6 @@ def setup_datasets(dataset_type=DatasetType.DATABRICKS, reset=False, max_documen
         try:
             dbutils.fs.rm(raw_data_dir, True)
             dbutils.fs.mkdirs(raw_data_dir)
-            spark.sql(f"DROP CATALOG IF EXISTS {catalog_name} CASCADE")
-            spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog_name}")
-            spark.sql(f"CREATE SCHEMA IF NOT EXISTS {catalog_name}.{schema_name}")
             spark.sql(f"USE CATALOG {catalog_name}")
             spark.sql(f"USE SCHEMA {schema_name}")
         except Exception as e:
@@ -154,9 +151,10 @@ def download_gardening_dataset(max_documents=None):
         spark_gardening_df = spark.createDataFrame(gardening_df)
 
         # Write to Delta table
-        table_name = f"{catalog_name}.{schema_name}.gardening_dataset_raw"
-        spark_gardening_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
-        print(f"Raw data is now available in table {table_name}")
+        view_name = f"gardening_dataset_raw_{table_suffix}"
+        spark_gardening_df.createOrReplaceTempView(view_name)
+
+        print(f"Raw data is now available in view {view_name}")
         
     except Exception as e:
         print(f"Error during data download: {e}")
@@ -219,14 +217,12 @@ def download_databricks_dataset(max_documents=None):
     final_df = df_with_html.withColumn("text", download_web_page_udf("html_content"))
 
     # Select and filter non-null results
-    table_name = f"{catalog_name}.{schema_name}.databricks_documentation_raw"
+    view_name = f"databricks_documentation_raw_{table_suffix}"
     final_df = final_df.select("url", "text").filter("text IS NOT NULL")
 
-    final_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    final_df.createOrReplaceTempView(view_name)
 
-    print(f"Raw data is now available in table {table_name}")
-
-
+    print(f"Raw data is now available in view {view_name}")
 
 # COMMAND ----------
 
