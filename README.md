@@ -1,5 +1,5 @@
 # Databricks-GenAI-Series
-All the resources related to GenAI hands on workshop.
+All the resources related to GenAI hands on workshop. To use this code clone this repo in a Databaricks workspace.
 
 ## Overview
 This repository explores **Transformers, Prompt Engineering, and Retrieval-Augmented Generation (RAG)** using Apache Spark and Databricks notebooks. The project covers:
